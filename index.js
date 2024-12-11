@@ -1,7 +1,6 @@
 const fs = require('fs');
+const path = require('path');
 const axios = require('axios');
-const { CookieJar } = require('tough-cookie');
-const { wrapper } = require('axios-cookiejar-support');
 const dotenv = require('dotenv');
 
 // Load environment variables dynamically
@@ -19,19 +18,14 @@ const CONFIG = {
     tokenUrl: process.env.CPI_TOKENURL,
     clientId: process.env.CPI_CLIENT_ID,
     clientSecret: process.env.CPI_CLIENT_SECRET,
+    envName: process.env.ENV_NAME || 'unknown-env', // Dynamically used for naming files
 };
-console.log(`[DEBUG] Configuration: Host - ${CONFIG.host}`);
+console.log(`[DEBUG] Configuration: Host - ${CONFIG.host}, Env Name - ${CONFIG.envName}`);
 
-// Reinitialize Cookie Jar
+// Create Axios Instance
 function createAxiosInstance() {
-    console.log(`[DEBUG] Creating new Axios instance with a fresh cookie jar`);
-    const cookieJar = new CookieJar();
-    return wrapper(
-        axios.create({
-            jar: cookieJar,
-            withCredentials: true,
-        })
-    );
+    console.log(`[DEBUG] Creating new Axios instance`);
+    return axios.create({});
 }
 
 let cachedToken = null;
@@ -67,8 +61,9 @@ async function fetchPackages(axiosInstance, accessToken) {
         const response = await axiosInstance.get(`${CONFIG.host}/IntegrationPackages`, {
             headers: { Authorization: `Bearer ${accessToken}` },
         });
-        console.log(`[DEBUG] Fetched ${response.data.d.results.length} packages`);
-        return response.data.d.results;
+        const results = response.data?.d?.results || [];
+        console.log(`[DEBUG] Fetched ${results.length} packages`);
+        return results;
     } catch (error) {
         console.error('[ERROR] Error fetching packages:', error.response?.data || error.message);
         throw error;
@@ -84,8 +79,9 @@ async function fetchIflowsByPackage(axiosInstance, packageId, accessToken) {
                 headers: { Authorization: `Bearer ${accessToken}` },
             }
         );
-        console.log(`[DEBUG] Fetched ${response.data.d.results.length} iFlows for package: ${packageId}`);
-        return response.data.d.results;
+        const results = response.data?.d?.results || [];
+        console.log(`[DEBUG] Fetched ${results.length} iFlows for package: ${packageId}`);
+        return results;
     } catch (error) {
         console.error(`[ERROR] Error fetching iFlows for package ${packageId}:`, error.response?.data || error.message);
         throw error;
@@ -95,7 +91,7 @@ async function fetchIflowsByPackage(axiosInstance, packageId, accessToken) {
 (async function main() {
     try {
         console.log(`[DEBUG] Starting data fetch for environment: ${args.env}`);
-        const axiosInstance = createAxiosInstance(); // Create a new instance per tenant
+        const axiosInstance = createAxiosInstance();
         const token = await getOAuthToken(axiosInstance);
         const packages = await fetchPackages(axiosInstance, token);
 
@@ -113,9 +109,18 @@ async function fetchIflowsByPackage(axiosInstance, packageId, accessToken) {
             })
         );
 
-        const outputFileName = `results-${args.env.split('.env.')[1]}.json`;
-        fs.writeFileSync(outputFileName, JSON.stringify(results, null, 2));
-        console.log(`[DEBUG] Results saved to ${outputFileName}`);
+        // Create ./data directory if it doesn't exist
+        const outputDir = path.resolve(__dirname, './data');
+        if (!fs.existsSync(outputDir)) {
+            console.log(`[DEBUG] Creating directory: ${outputDir}`);
+            fs.mkdirSync(outputDir);
+        }
+
+        // Construct file name and save
+        const outputFileName = `results-${CONFIG.envName}.json`;
+        const outputFilePath = path.join(outputDir, outputFileName);
+        fs.writeFileSync(outputFilePath, JSON.stringify(results, null, 2));
+        console.log(`[DEBUG] Results saved to ${outputFilePath}`);
     } catch (error) {
         console.error('[ERROR] An error occurred:', error.message);
     }
