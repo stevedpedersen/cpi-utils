@@ -1,31 +1,46 @@
 import { writable } from 'svelte/store';
-import type { PackageComparison } from '$lib/types/cpi';
+import type {
+    PackageComparison,
+    PerformanceMetrics
+} from '$lib/types/cpi';
+
+interface ComparisonStoreState {
+    comparison: PackageComparison[] | null;
+    lastComparisonTime: Date | null;
+    isLoading: boolean;
+    error: string | null;
+    timestamp: number | null;
+    performanceMetrics: PerformanceMetrics;
+}
 
 function createComparisonStore() {
     const CACHE_KEY = 'cpi-comparison-cache';
-    const CACHE_EXPIRY_HOURS = 4; // Cache valid for 4 hours
+    const CACHE_EXPIRY_HOURS = 4;
 
-    function isCacheValid(timestamp: number): boolean {
+    const isCacheValid = (timestamp: number): boolean => {
         const currentTime = new Date().getTime();
         const timeDiff = currentTime - timestamp;
         const hoursDiff = timeDiff / (1000 * 60 * 60);
         return hoursDiff < CACHE_EXPIRY_HOURS;
     }
 
-    function getCachedComparison() {
+    const getCachedComparison = (): ComparisonStoreState | null => {
         const cachedData = localStorage.getItem(CACHE_KEY);
         if (cachedData) {
-            const parsedData = JSON.parse(cachedData);
-            if (isCacheValid(parsedData.timestamp)) {
-                return parsedData;
+            try {
+                const parsedData: ComparisonStoreState = JSON.parse(cachedData);
+                if (parsedData.timestamp && isCacheValid(parsedData.timestamp)) {
+                    return parsedData;
+                }
+            } catch (error) {
+                console.error('Error parsing cached comparison', error);
             }
-            // Remove expired cache
             localStorage.removeItem(CACHE_KEY);
         }
         return null;
     }
 
-    const initialState = getCachedComparison() || {
+    const initialState: ComparisonStoreState = getCachedComparison() || {
         comparison: null,
         lastComparisonTime: null,
         isLoading: false,
@@ -38,77 +53,49 @@ function createComparisonStore() {
         }
     };
 
-    const { subscribe, set, update } = writable(initialState);
+    const { subscribe, set, update } = writable<ComparisonStoreState>(initialState);
 
     return {
         subscribe,
         setComparison: (
-            comparison: PackageComparison[],
+            comparison: PackageComparison[], 
             performanceMetrics: PerformanceMetrics
-        ) =>
-            update(store => {
-                const newStore = {
-                    ...store,
-                    comparison,
-                    lastComparisonTime: new Date(),
-                    isLoading: false,
-                    error: null,
-                    timestamp: new Date().getTime(),
-                    performanceMetrics
-                };
+        ) => update(store => {
+            const newStore: ComparisonStoreState = {
+                ...store,
+                comparison,
+                lastComparisonTime: new Date(),
+                isLoading: false,
+                error: null,
+                timestamp: new Date().getTime(),
+                performanceMetrics
+            };
 
+            try {
                 localStorage.setItem(CACHE_KEY, JSON.stringify(newStore));
-                return newStore;
-            }),
-        // ... other methods
+            } catch (error) {
+                console.error('Error caching comparison', error);
+            }
+
+            return newStore;
+        }),
+        setLoading: (isLoading: boolean) => update(store => ({
+            ...store,
+            isLoading
+        })),
+        setError: (error: string | null) => update(store => ({
+            ...store,
+            error,
+            isLoading: false
+        })),
+        clearComparison: () => {
+            localStorage.removeItem(CACHE_KEY);
+            set(initialState);
+        },
+        resetCache: () => {
+            localStorage.removeItem(CACHE_KEY);
+        }
     };
 }
-
-
-// function createComparisonStore() {
-//     const CACHE_KEY = 'cpi-comparison-cache';
-
-//     // Try to load from localStorage
-//     const cachedComparison = localStorage.getItem(CACHE_KEY);
-//     const initialState = cachedComparison
-//         ? JSON.parse(cachedComparison)
-//         : {
-//             comparison: null as PackageComparison[] | null,
-//             lastComparisonTime: null as Date | null,
-//             isLoading: false,
-//             error: null as string | null
-//         };
-
-//     const { subscribe, set, update } = writable(initialState);
-
-//     return {
-//         subscribe,
-//         setComparison: (comparison: PackageComparison[]) =>
-//             update(store => {
-//                 const newStore = {
-//                     ...store,
-//                     comparison,
-//                     lastComparisonTime: new Date(),
-//                     isLoading: false,
-//                     error: null
-//                 };
-
-//                 // Cache in localStorage
-//                 localStorage.setItem(CACHE_KEY, JSON.stringify(newStore));
-
-//                 return newStore;
-//             }),
-//         clearCache: () => {
-//             localStorage.removeItem(CACHE_KEY);
-//             set({
-//                 comparison: null,
-//                 lastComparisonTime: null,
-//                 isLoading: false,
-//                 error: null
-//             });
-//         },
-//         // Other methods remain the same
-//     };
-// }
 
 export const comparisonStore = createComparisonStore();

@@ -7,169 +7,189 @@
   import { ComparisonService } from '$lib/services/comparisonService';
   import ArtifactDetailModal from '$lib/components/ArtifactDetailModal.svelte';
   import { ErrorService } from '$lib/services/errorService';
-	import { PerformanceTracker } from '$lib/services/performanceService';
-	import ComparisonSummaryDashboard from '$lib/components/ComparisonSummaryDashboard.svelte';
-    import type { PackageComparison } from '$lib/types/cpi';
+  import { PerformanceTracker } from '$lib/services/performanceService';
+  import ComparisonSummaryDashboard from '$lib/components/ComparisonSummaryDashboard.svelte';
+  import type { PackageComparison } from '$lib/types/cpi';
 
   let selectedPackage: PackageComparison | null = null;
+  let isComparing = false;
+  let error: string | null = null;
+  let performanceDetails: {
+      packageCount: number;
+      environmentNames: string[];
+      metrics: ReturnType<PerformanceTracker['getMetrics']>;
+  } | null = null;
 
   function openPackageDetails(pkg: PackageComparison) {
-    selectedPackage = pkg;
+      selectedPackage = pkg;
   }
 
   function closePackageDetails() {
-    selectedPackage = null;
+      selectedPackage = null;
   }
-  let isComparing = false;
-  let error: string | null = null;
 
   async function performComparison() {
-    const { env1, env2 } = $tenantStore.selectedTenants;
-    
-    if (!env1 || !env2) {
-      error = 'Please select two environments';
-      return;
-    }
+      const { env1, env2 } = $tenantStore.selectedTenants;
 
-	const performanceTracker = new PerformanceTracker();
-    isComparing = true;
-    error = null;
-    comparisonStore.setLoading(true);
+      if (!env1 || !env2) {
+          error = 'Please select two environments';
+          return;
+      }
 
-    try {
-      const env1Service = new CPIService(env1);
-      const env2Service = new CPIService(env2);
+      const performanceTracker = new PerformanceTracker();
+      isComparing = true;
+      error = null;
 
-      const env1Packages = await env1Service.fetchPackages();
-      const env2Packages = await env2Service.fetchPackages();
+      try {
+          // Wrap entire comparison process in performance tracking
+          const { result, metrics } = await PerformanceTracker.measureAsync(async () => {
+              const env1Service = new CPIService(env1);
+              const env2Service = new CPIService(env2);
 
-      // Fetch artifacts for each package
-      const env1PackagesWithArtifacts = await Promise.all(
-        env1Packages.map(async (pkg) => ({
-          ...pkg,
-          artifacts: await env1Service.fetchArtifacts(pkg.Id)
-        }))
-      );
+              performanceTracker.startFetch();
+              const env1Packages = await env1Service.fetchPackages();
+              const env2Packages = await env2Service.fetchPackages();
+              performanceTracker.endFetch();
 
-      const env2PackagesWithArtifacts = await Promise.all(
-        env2Packages.map(async (pkg) => ({
-          ...pkg,
-          artifacts: await env2Service.fetchArtifacts(pkg.Id)
-        }))
-      );
+              performanceTracker.startProcessing();
+              // Fetch artifacts for each package
+              const env1PackagesWithArtifacts = await Promise.all(
+                  env1Packages.map(async (pkg) => ({
+                      ...pkg,
+                      artifacts: await env1Service.fetchArtifacts(pkg.Id)
+                  }))
+              );
 
-      const comparisonService = new ComparisonService();
-      const comparison = comparisonService.comparePackages(
-        env1PackagesWithArtifacts, 
-        env2PackagesWithArtifacts
-      );
+              const env2PackagesWithArtifacts = await Promise.all(
+                  env2Packages.map(async (pkg) => ({
+                      ...pkg,
+                      artifacts: await env2Service.fetchArtifacts(pkg.Id)
+                  }))
+              );
 
-    //   comparisonStore.setComparison(comparison);
-	  const metrics = performanceTracker.getMetrics();
-	  comparisonStore.setComparison(comparison, metrics);
-    } catch (err) {
-      	// error = err instanceof Error ? err.message : 'An unknown error occurred';
-      	// comparisonStore.setError(error);
-	  	const errorDetails = ErrorService.categorizeError(err);
-		ErrorService.logError(err);
-		
-		comparisonStore.setError(errorDetails.message);
-		
-		// Optional: Show user-friendly error modal
-		if (errorDetails.recoverable) {
-		  // Show retry option
-		}
-    } finally {
-      isComparing = false;
-    }
+              const comparisonService = new ComparisonService();
+              const comparison = comparisonService.comparePackages(
+                  env1PackagesWithArtifacts,
+                  env2PackagesWithArtifacts
+              );
+              performanceTracker.endProcessing();
+
+              return { 
+                  comparison, 
+                  packageCount: env1Packages.length + env2Packages.length,
+                  environmentNames: [env1.envName, env2.envName]
+              };
+          }, 'Full Comparison Process');
+
+          // Store comparison results
+          comparisonStore.setComparison(result.comparison, metrics);
+
+          // Capture additional performance details
+          performanceDetails = {
+              packageCount: result.packageCount,
+              environmentNames: result.environmentNames,
+              metrics
+          };
+      } catch (err) {
+          const errorDetails = ErrorService.categorizeError(err);
+          ErrorService.logError(err);
+          error = errorDetails.message;
+      } finally {
+          isComparing = false;
+      }
   }
 </script>
 
 <div class="container">
   <h1>CPI Artifact Comparison</h1>
-  
+
   <TenantSelector />
 
   <div class="comparison-actions">
-    <button 
-      on:click={performComparison}
-      disabled={isComparing}
-    >
-      {isComparing ? 'Comparing...' : 'Compare Environments'}
-    </button>
-
-    {#if $comparisonStore.lastComparisonTime}
-      <p>
-        Last Comparison: 
-        {$comparisonStore.lastComparisonTime.toLocaleString()}
-      </p>
-    {/if}
+      <button 
+          on:click={performComparison}
+          disabled={isComparing}
+      >
+          {isComparing ? 'Comparing...' : 'Compare Environments'}
+      </button>
   </div>
 
   {#if error}
-    <div class="error-message">
-      {error}
-    </div>
+      <div class="error-message">{error}</div>
   {/if}
 
-	<!-- In the comparison report section -->
-	{#if $comparisonStore.comparison}
-	<ComparisonReport 
-		comparison={$comparisonStore.comparison}
-		on:packageSelect={(event) => openPackageDetails(event.detail)}
-	/>
-	{/if}
-  
-	{#if $comparisonStore.comparison}
-	<ComparisonSummaryDashboard comparison={$comparisonStore.comparison} />
+  {#if performanceDetails}
+      <div class="performance-details">
+          <h3>Performance Breakdown</h3>
+          <div class="performance-grid">
+              <div class="performance-item">
+                  <span class="label">Environments:</span>
+                  <span class="value">{performanceDetails.environmentNames.join(' vs ')}</span>
+              </div>
+              <div class="performance-item">
+                  <span class="label">Total Packages:</span>
+                  <span class="value">{performanceDetails.packageCount}</span>
+              </div>
+              <div class="performance-item">
+                  <span class="label">Fetch Time:</span>
+                  <span class="value">{performanceDetails.metrics.fetchTime} ms</span>
+              </div>
+              <div class="performance-item">
+                  <span class="label">Processing Time:</span>
+                  <span class="value">{performanceDetails.metrics.processingTime} ms</span>
+              </div>
+              <div class="performance-item">
+                  <span class="label">Total Time:</span>
+                  <span class="value">{performanceDetails.metrics.totalTime} ms</span>
+              </div>
+          </div>
+      </div>
   {/if}
-  
-  {#if $comparisonStore.performanceMetrics}
-	<div class="performance-metrics">
-	  <h3>Performance Metrics</h3>
-	  <p>Fetch Time: {$comparisonStore.performanceMetrics.fetchTime}ms</p>
-	  <p>Processing Time: {$comparisonStore.performanceMetrics.processingTime}ms</p>
-	  <p>Total Time: {$comparisonStore.performanceMetrics.totalTime}ms</p>
-	</div>
+
+  {#if $comparisonStore.comparison}
+      <ComparisonReport
+          comparison={$comparisonStore.comparison}
+          on:packageSelect={(event) => openPackageDetails(event.detail)}
+      />
+      <ComparisonSummaryDashboard comparison={$comparisonStore.comparison} />
   {/if}
-  
-	{#if selectedPackage}
-	<ArtifactDetailModal 
-		packageDetails={selectedPackage}
-		closeModal={closePackageDetails}
-	/>
-	{/if}
+
+  {#if selectedPackage}
+      <ArtifactDetailModal 
+          packageDetails={selectedPackage}
+          closeModal={closePackageDetails}
+      />
+  {/if}
 </div>
 
 <style>
-  .container {
-    max-width: 800px;
-    margin: 0 auto;
-    padding: 1rem;
+  .performance-details {
+      background-color: #f4f4f4;
+      border-radius: 8px;
+      padding: 15px;
+      margin-top: 15px;
   }
 
-  .comparison-actions {
-    margin: 1rem 0;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
+  .performance-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 10px;
   }
 
-  button {
-    padding: 0.5rem 1rem;
-    background-color: #007bff;
-    color: white;
-    border: none;
-    cursor: pointer;
+  .performance-item {
+      display: flex;
+      justify-content: space-between;
+      padding: 5px;
+      background-color: #e9e9e9;
+      border-radius: 4px;
   }
 
-  button:disabled {
-    background-color: #cccccc;
-    cursor: not-allowed;
+  .performance-item .label {
+      font-weight: bold;
+      color: #333;
   }
 
-  .error-message {
-    color: red;
-    margin: 1rem 0;
+  .performance-item .value {
+      color: #666;
   }
 </style>

@@ -67,7 +67,9 @@ artifact-compare/
 └── tsconfig.json
 Snippets:
 
-src/lib/types/cpi.ts:
+
+
+// src/lib/types/cpi.ts:
 export interface TenantConfig {
   envName: string;
   host: string;
@@ -87,7 +89,7 @@ export interface PackageComparison {
 }
 
 
-src/lib/services/cpiService.ts:
+// src/lib/services/cpiService.ts:
 export class CPIService {
   private config: TenantConfig;
 
@@ -103,7 +105,10 @@ export class CPIService {
     // Fetch integration packages
   }
 }
-src/lib/stores/comparisonStore.ts:
+
+
+
+// src/lib/stores/comparisonStore.ts:
 function createComparisonStore() {
   const { subscribe, update } = writable({
     comparison: null,
@@ -117,7 +122,10 @@ function createComparisonStore() {
       update(store => ({ ...store, comparison }))
   };
 }
-src/routes/+page.svelte:
+
+
+
+// src/routes/+page.svelte:
 <script lang="ts">
   import TenantSelector from '$lib/components/TenantSelector.svelte';
   import ComparisonReport from '$lib/components/ComparisonReport.svelte';
@@ -129,7 +137,10 @@ src/routes/+page.svelte:
 
 <TenantSelector />
 <button on:click={performComparison}>Compare</button>
-package.json:
+
+
+
+// package.json:
 {
   "name": "artifact-compare",
   "scripts": {

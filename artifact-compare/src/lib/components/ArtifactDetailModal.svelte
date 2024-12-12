@@ -1,7 +1,8 @@
+// src/lib/components/ArtifactDetailModal.svelte
 <script lang="ts">
     import { onMount } from 'svelte';
     import Chart from 'chart.js/auto';
-    import type { PackageComparison } from '$lib/types/cpi';
+    import type { PackageComparison, PackageArtifacts } from '$lib/types/cpi';
   
     export let packageDetails: PackageComparison;
     export let closeModal: () => void;
@@ -42,7 +43,7 @@
       };
   
       ['iflows', 'valueMappings', 'scriptCollections', 'messageMappings'].forEach(type => {
-        packageDetails.artifacts[type].forEach(artifact => {
+        packageDetails.artifacts[type as keyof PackageArtifacts].forEach(artifact => {
           statusCounts[artifact.status || 'Match']++;
         });
       });

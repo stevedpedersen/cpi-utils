@@ -1,7 +1,16 @@
-import type { PackageComparison, Artifact } from '$lib/types/cpi';
+import type {
+    PackageComparison,
+    Artifact,
+    PackageArtifacts,
+    PackageWithArtifacts
+} from '$lib/types/cpi';
+
 
 export class ComparisonService {
-    comparePackages(env1Packages: any[], env2Packages: any[]): PackageComparison[] {
+    comparePackages(
+        env1Packages: PackageWithArtifacts[],
+        env2Packages: PackageWithArtifacts[]
+    ): PackageComparison[] {
         const comparison: PackageComparison[] = [];
 
         env1Packages.forEach(env1Pkg => {
@@ -35,8 +44,11 @@ export class ComparisonService {
         return comparison;
     }
 
-    private compareArtifacts(env1Pkg: any, env2Pkg: any) {
-        const artifactTypes = [
+    private compareArtifacts(
+        env1Pkg: PackageWithArtifacts,
+        env2Pkg: PackageWithArtifacts
+    ): PackageArtifacts {
+        const artifactTypes: Array<keyof PackageArtifacts> = [
             'iflows', 'valueMappings',
             'scriptCollections', 'messageMappings'
         ];
@@ -47,10 +59,18 @@ export class ComparisonService {
                 env2Pkg.artifacts[type] || []
             );
             return acc;
-        }, {} as any);
+        }, {
+            iflows: [],
+            valueMappings: [],
+            scriptCollections: [],
+            messageMappings: []
+        } as PackageArtifacts);
     }
 
-    private compareArtifactList(env1Artifacts: Artifact[], env2Artifacts: Artifact[]): Artifact[] {
+    private compareArtifactList(
+        env1Artifacts: Artifact[],
+        env2Artifacts: Artifact[]
+    ): Artifact[] {
         const env2ArtifactIds = env2Artifacts.map(a => a.Id);
 
         return env1Artifacts.map(artifact => ({
@@ -59,9 +79,11 @@ export class ComparisonService {
         }));
     }
 
-    private determinePackageStatus(artifacts: any): PackageComparison['status'] {
-        const allMatch = Object.values(artifacts).every(
-            (list: Artifact[]) => list.every(item => item.status === 'Match')
+    private determinePackageStatus(
+        artifacts: PackageArtifacts
+    ): PackageComparison['status'] {
+        const allMatch = (Object.keys(artifacts) as Array<keyof PackageArtifacts>).every(
+            type => artifacts[type].every(item => item.status === 'Match')
         );
 
         return allMatch ? 'Exact Match' : 'Subset Match';
