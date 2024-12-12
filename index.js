@@ -2,9 +2,9 @@ const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
 const dotenv = require('dotenv');
+const args = require('yargs').argv;
 
 // Load environment variables dynamically
-const args = require('yargs').argv;
 if (!args.env) {
     console.error('Please provide an environment file with --env');
     process.exit(1);
@@ -22,103 +22,105 @@ const CONFIG = {
 };
 console.log(`[DEBUG] Configuration: Host - ${CONFIG.host}, Env Name - ${CONFIG.envName}`);
 
-// Create Axios Instance
-function createAxiosInstance() {
-    console.log(`[DEBUG] Creating new Axios instance`);
-    return axios.create({});
-}
-
-let cachedToken = null;
-let tokenExpiry = null;
-
-async function getOAuthToken(axiosInstance) {
-    if (cachedToken && tokenExpiry && tokenExpiry > Date.now()) {
-        console.log(`[DEBUG] Using cached OAuth token`);
-        return cachedToken;
-    }
+// Helper to fetch token and create Axios instance
+async function getOAuthToken() {
     console.log(`[DEBUG] Fetching new OAuth token`);
     try {
-        const response = await axiosInstance.post(CONFIG.tokenUrl, null, {
+        const response = await axios.post(CONFIG.tokenUrl, null, {
             params: { grant_type: 'client_credentials' },
             auth: {
                 username: CONFIG.clientId,
                 password: CONFIG.clientSecret,
             },
         });
-        cachedToken = response.data.access_token;
-        tokenExpiry = Date.now() + (response.data.expires_in - 300) * 1000;
         console.log(`[DEBUG] Fetched new OAuth token successfully`);
-        return cachedToken;
+        return response.data.access_token;
     } catch (error) {
         console.error('[ERROR] Error fetching OAuth token:', error.response?.data || error.message);
         throw error;
     }
 }
 
-async function fetchPackages(axiosInstance, accessToken) {
-    console.log(`[DEBUG] Fetching integration packages from: ${CONFIG.host}`);
+function createAxiosInstance(accessToken) {
+    return axios.create({
+        baseURL: CONFIG.host,
+        headers: { Authorization: `Bearer ${accessToken}` },
+    });
+}
+
+// Fetch iFlows, value mappings, script collections, and message mappings
+async function fetchArtifacts(axiosInstance, packageId) {
+    const artifactEndpoints = [
+        { key: 'iflows', url: `/IntegrationPackages('${packageId}')/IntegrationDesigntimeArtifacts` },
+        { key: 'valueMappings', url: `/IntegrationPackages('${packageId}')/ValueMappingDesigntimeArtifacts` },
+        { key: 'scriptCollections', url: `/IntegrationPackages('${packageId}')/ScriptCollectionDesigntimeArtifacts` },
+        { key: 'messageMappings', url: `/IntegrationPackages('${packageId}')/MessageMappingDesigntimeArtifacts` },
+    ];
+
+    const artifacts = {};
+    for (const { key, url } of artifactEndpoints) {
+        try {
+            console.log(`[DEBUG] Fetching ${key} for package: ${packageId}`);
+            const response = await axiosInstance.get(url);
+            artifacts[key] = response.data?.d?.results || [];
+            console.log(`[DEBUG] Fetched ${artifacts[key].length} ${key} for package: ${packageId}`);
+        } catch (error) {
+            console.error(`[ERROR] Error fetching ${key} for package ${packageId}:`, error.response?.data || error.message);
+            artifacts[key] = [];
+        }
+    }
+
+    return artifacts;
+}
+
+// Fetch packages and their artifacts
+async function fetchPackagesAndArtifacts(axiosInstance) {
+    console.log(`[DEBUG] Fetching integration packages`);
     try {
-        const response = await axiosInstance.get(`${CONFIG.host}/IntegrationPackages`, {
-            headers: { Authorization: `Bearer ${accessToken}` },
-        });
-        const results = response.data?.d?.results || [];
-        console.log(`[DEBUG] Fetched ${results.length} packages`);
-        return results;
+        const response = await axiosInstance.get('/IntegrationPackages');
+        const packages = response.data?.d?.results || [];
+        console.log(`[DEBUG] Fetched ${packages.length} packages`);
+        return await Promise.all(
+            packages.map(async (pkg) => {
+                const artifacts = await fetchArtifacts(axiosInstance, pkg.Id);
+                return {
+                    packageName: pkg.Name,
+                    packageVersion: pkg.Version,
+                    artifacts,
+                };
+            })
+        );
     } catch (error) {
         console.error('[ERROR] Error fetching packages:', error.response?.data || error.message);
         throw error;
     }
 }
 
-async function fetchIflowsByPackage(axiosInstance, packageId, accessToken) {
-    console.log(`[DEBUG] Fetching iFlows for package: ${packageId}`);
-    try {
-        const response = await axiosInstance.get(
-            `${CONFIG.host}/IntegrationPackages('${encodeURIComponent(packageId)}')/IntegrationDesigntimeArtifacts`,
-            {
-                headers: { Authorization: `Bearer ${accessToken}` },
-            }
-        );
-        const results = response.data?.d?.results || [];
-        console.log(`[DEBUG] Fetched ${results.length} iFlows for package: ${packageId}`);
-        return results;
-    } catch (error) {
-        console.error(`[ERROR] Error fetching iFlows for package ${packageId}:`, error.response?.data || error.message);
-        throw error;
-    }
-}
-
+// Main function
 (async function main() {
     try {
         console.log(`[DEBUG] Starting data fetch for environment: ${args.env}`);
-        const axiosInstance = createAxiosInstance();
-        const token = await getOAuthToken(axiosInstance);
-        const packages = await fetchPackages(axiosInstance, token);
-
-        const results = await Promise.all(
-            packages.map(async (pkg) => {
-                const iflows = await fetchIflowsByPackage(axiosInstance, pkg.Id, token);
-                return {
-                    packageName: pkg.Name,
-                    packageVersion: pkg.Version,
-                    iflows: iflows.map((flow) => ({
-                        name: flow.Name,
-                        version: flow.Version,
-                    })),
-                };
-            })
-        );
+        const accessToken = await getOAuthToken();
+        const axiosInstance = createAxiosInstance(accessToken);
+        const results = await fetchPackagesAndArtifacts(axiosInstance);
 
         // Create ./data directory if it doesn't exist
-        const outputDir = path.resolve(__dirname, './data');
+        const outputDir = path.resolve(__dirname, './output');
+        const dataDir = path.join(outputDir, 'data');
+        
         if (!fs.existsSync(outputDir)) {
             console.log(`[DEBUG] Creating directory: ${outputDir}`);
             fs.mkdirSync(outputDir);
         }
+        
+        if (!fs.existsSync(dataDir)) {
+            console.log(`[DEBUG] Creating directory: ${dataDir}`);
+            fs.mkdirSync(dataDir);
+        }
 
-        // Construct file name and save
+        // Save results
         const outputFileName = `results-${CONFIG.envName}.json`;
-        const outputFilePath = path.join(outputDir, outputFileName);
+        const outputFilePath = path.join(dataDir, outputFileName);
         fs.writeFileSync(outputFilePath, JSON.stringify(results, null, 2));
         console.log(`[DEBUG] Results saved to ${outputFilePath}`);
     } catch (error) {
