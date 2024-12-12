@@ -1,3 +1,5 @@
+// src/lib/components/TenantSelector.svelte
+
 <script lang="ts">
   import { tenantStore } from '$lib/stores/tenantStore';
   import type { TenantConfig } from '$lib/types/cpi';
