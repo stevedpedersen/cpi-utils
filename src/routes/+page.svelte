@@ -10,8 +10,12 @@
   import { ErrorService } from "$lib/services/errorService";
   import { PerformanceTracker } from "$lib/services/performanceService";
   import ComparisonSummaryDashboard from "$lib/components/ComparisonSummaryDashboard.svelte";
-  import type { PackageComparison } from "$lib/types/cpi";
+  import type { PackageComparison, TenantConfig } from "$lib/types/cpi";
 
+  // let props = $props();
+  let { tenants = [] } = $props();
+  let selectedEnv1: TenantConfig | null = $state(null);
+  let selectedEnv2: TenantConfig | null = $state(null);
   let selectedPackage: PackageComparison | null = null;
   let isComparing = false;
   let error: string | null = null;
@@ -20,6 +24,19 @@
     environmentNames: string[];
     metrics: ReturnType<PerformanceTracker["getMetrics"]>;
   } | null = null;
+
+  // $: tenantStore.subscribe((store) => {
+  //   tenants = store.availableTenants || [];
+  // });
+
+  const handleSelect = (env: "env1" | "env2", tenant: TenantConfig) => {
+    if (env === "env1") {
+      selectedEnv1 = tenant;
+    } else if (env === "env2") {
+      selectedEnv2 = tenant;
+    }
+    tenantStore.selectTenant(env, tenant);
+  }
 
   function openPackageDetails(pkg: PackageComparison) {
     selectedPackage = pkg;
@@ -107,10 +124,27 @@
 <div class="container">
   <h1>CPI Artifact Comparison</h1>
 
-  <TenantSelector />
+  <section>
+    <h2>Select Two Tenants</h2>
+    <TenantSelector
+      tenants={tenants}
+      selectedTenant={selectedEnv1}
+      onSelect={(tenant: TenantConfig) => handleSelect("env1", tenant)}
+      label="-- Select Tenant 1 --"
+    />
+    <TenantSelector
+      tenants={tenants}
+      selectedTenant={selectedEnv2}
+      onSelect={(tenant: TenantConfig) => handleSelect("env2", tenant)}
+      label="-- Select Tenant 2 --"
+    />
+  </section>
+
+
+  <!-- <TenantSelector /> -->
 
   <div class="comparison-actions">
-    <button on:click={performComparison} disabled={isComparing}>
+    <button onclick={performComparison} disabled={isComparing}>
       {isComparing ? "Comparing..." : "Compare Environments"}
     </button>
   </div>

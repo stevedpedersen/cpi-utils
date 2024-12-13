@@ -1,0 +1,18 @@
+{
+    "tenants": [
+        {
+            "name": "im-dev-eu",
+            "host": "ttps://jnj-im-dev.it-cpi026.cfapps.eu10-002.hana.ondemand.com/api/v1",
+            "tokenUrl": "https://jnj-im-dev.authentication.eu10.hana.ondemand.com/oauth/token",
+            "clientId": "client-id",
+            "clientSecret": "client-secret"
+        },
+        {
+            "name": "im-pq-na",
+            "host": "https://jnj-im-pq-na.it-cpi019.cfapps.us10-002.hana.ondemand.com/api/v1",
+            "tokenUrl": "https://jnj-im-pq-na.authentication.us10.hana.ondemand.com/oauth/token",
+            "clientId": "client-id",
+            "clientSecret": "client-secret"
+        }
+    ]
+}
