@@ -1,3 +1,4 @@
+// src/lib/services/errorService.ts
 export interface ErrorDetails {
     type: 'Network' | 'Authentication' | 'Unknown';
     message: string;
