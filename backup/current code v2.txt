@@ -1,0 +1,1366 @@
+<!-- src/app.html -->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="icon" href="%sveltekit.assets%/favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark light" />
+    <meta name="description" content="CPI Artifact Comparison Tool" />
+
+    %sveltekit.head%
+    <link rel="stylesheet" href="/shared.css" />
+  </head>
+  <body data-sveltekit-preload-data="hover">
+    <div style="display: contents">%sveltekit.body%</div>
+  </body>
+</html>
+
+
+
+
+// src/app.d.ts
+declare global {
+  namespace App {
+    interface Error { }
+    interface Locals { }
+    interface PageData { }
+    interface PageState { }
+    interface Platform { }
+  }
+}
+
+export { };
+
+
+
+
+
+
+// src/routes/+page.ts
+import type { Load } from "@sveltejs/kit";
+
+export const load: Load = async () => {
+  return {
+    title: "CPI Artifact Comparison",
+  };
+};
+
+
+
+
+
+<script lang="ts">
+  // src/routes/+page.svelte
+  import TenantSelector from "$lib/components/TenantSelector.svelte";
+  import ComparisonReport from "$lib/components/ComparisonReport.svelte";
+  import { tenantStore } from "$lib/stores/tenantStore";
+  import { comparisonStore } from "$lib/stores/comparisonStore";
+  import { CPIService } from "$lib/services/cpiService";
+  import { ComparisonService } from "$lib/services/comparisonService";
+  import ArtifactDetailModal from "$lib/components/ArtifactDetailModal.svelte";
+  import { ErrorService } from "$lib/services/errorService";
+  import { PerformanceTracker } from "$lib/services/performanceService";
+  import ComparisonSummaryDashboard from "$lib/components/ComparisonSummaryDashboard.svelte";
+  import type { PackageComparison } from "$lib/types/cpi";
+
+  let selectedPackage: PackageComparison | null = null;
+  let isComparing = false;
+  let error: string | null = null;
+  let performanceDetails: {
+    packageCount: number;
+    environmentNames: string[];
+    metrics: ReturnType<PerformanceTracker["getMetrics"]>;
+  } | null = null;
+
+  function openPackageDetails(pkg: PackageComparison) {
+    selectedPackage = pkg;
+  }
+
+  function closePackageDetails() {
+    selectedPackage = null;
+  }
+
+  async function performComparison() {
+    const { env1, env2 } = $tenantStore.selectedTenants;
+
+    if (!env1 || !env2) {
+      error = "Please select two environments";
+      return;
+    }
+
+    const performanceTracker = new PerformanceTracker();
+    isComparing = true;
+    error = null;
+
+    try {
+      // Wrap entire comparison process in performance tracking
+      const { result, metrics } = await PerformanceTracker.measureAsync(
+        async () => {
+          const env1Service = new CPIService(env1);
+          const env2Service = new CPIService(env2);
+
+          performanceTracker.startFetch();
+          const env1Packages = await env1Service.fetchPackages();
+          const env2Packages = await env2Service.fetchPackages();
+          performanceTracker.endFetch();
+
+          performanceTracker.startProcessing();
+          // Fetch artifacts for each package
+          const env1PackagesWithArtifacts = await Promise.all(
+            env1Packages.map(async (pkg) => ({
+              ...pkg,
+              artifacts: await env1Service.fetchArtifacts(pkg.Id),
+            }))
+          );
+
+          const env2PackagesWithArtifacts = await Promise.all(
+            env2Packages.map(async (pkg) => ({
+              ...pkg,
+              artifacts: await env2Service.fetchArtifacts(pkg.Id),
+            }))
+          );
+
+          const comparisonService = new ComparisonService();
+          const comparison = comparisonService.comparePackages(
+            env1PackagesWithArtifacts,
+            env2PackagesWithArtifacts
+          );
+          performanceTracker.endProcessing();
+
+          return {
+            comparison,
+            packageCount: env1Packages.length + env2Packages.length,
+            environmentNames: [env1.envName, env2.envName],
+          };
+        },
+        "Full Comparison Process"
+      );
+
+      // Store comparison results
+      comparisonStore.setComparison(result.comparison, metrics);
+
+      // Capture additional performance details
+      performanceDetails = {
+        packageCount: result.packageCount,
+        environmentNames: result.environmentNames,
+        metrics,
+      };
+    } catch (err) {
+      const errorDetails = ErrorService.categorizeError(err);
+      ErrorService.logError(err);
+      error = errorDetails.message;
+    } finally {
+      isComparing = false;
+    }
+  }
+</script>
+
+<div class="container">
+  <h1>CPI Artifact Comparison</h1>
+
+  <TenantSelector />
+
+  <div class="comparison-actions">
+    <button on:click={performComparison} disabled={isComparing}>
+      {isComparing ? "Comparing..." : "Compare Environments"}
+    </button>
+  </div>
+
+  {#if error}
+    <div class="error-message">{error}</div>
+  {/if}
+
+  {#if performanceDetails}
+    <div class="performance-details">
+      <h3>Performance Breakdown</h3>
+      <div class="performance-grid">
+        <div class="performance-item">
+          <span class="label">Environments:</span>
+          <span class="value"
+            >{performanceDetails.environmentNames.join(" vs ")}</span
+          >
+        </div>
+        <div class="performance-item">
+          <span class="label">Total Packages:</span>
+          <span class="value">{performanceDetails.packageCount}</span>
+        </div>
+        <div class="performance-item">
+          <span class="label">Fetch Time:</span>
+          <span class="value">{performanceDetails.metrics.fetchTime} ms</span>
+        </div>
+        <div class="performance-item">
+          <span class="label">Processing Time:</span>
+          <span class="value"
+            >{performanceDetails.metrics.processingTime} ms</span
+          >
+        </div>
+        <div class="performance-item">
+          <span class="label">Total Time:</span>
+          <span class="value">{performanceDetails.metrics.totalTime} ms</span>
+        </div>
+      </div>
+    </div>
+  {/if}
+
+  {#if $comparisonStore.comparison}
+    <ComparisonReport
+      comparison={$comparisonStore.comparison}
+      on:packageSelect={(event) => openPackageDetails(event.detail)}
+    />
+    <ComparisonSummaryDashboard comparison={$comparisonStore.comparison} />
+  {/if}
+
+  {#if selectedPackage}
+    <ArtifactDetailModal
+      packageDetails={selectedPackage}
+      closeModal={closePackageDetails}
+    />
+  {/if}
+</div>
+
+<style>
+  .performance-details {
+    background-color: #f4f4f4;
+    border-radius: 8px;
+    padding: 15px;
+    margin-top: 15px;
+  }
+
+  .performance-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 10px;
+  }
+
+  .performance-item {
+    display: flex;
+    justify-content: space-between;
+    padding: 5px;
+    background-color: #e9e9e9;
+    border-radius: 4px;
+  }
+
+  .performance-item .label {
+    font-weight: bold;
+    color: #333;
+  }
+
+  .performance-item .value {
+    color: #666;
+  }
+</style>
+
+
+
+
+
+
+
+
+// src/lib/types/index.ts
+import type { AxiosInstance } from "axios";
+
+export type { AxiosInstance };
+
+
+
+
+
+// src/lib/types/cpi.ts:
+export interface TenantConfig {
+  envName: string;
+  host: string;
+  tokenUrl: string;
+  clientId: string;
+  clientSecret: string;
+}
+
+export interface Artifact {
+  Id: string;
+  Name: string;
+  Version: string;
+  status?: "Match" | "Missing in Env1" | "Missing in Env2";
+}
+
+export interface PackageArtifacts {
+  iflows: Artifact[];
+  valueMappings: Artifact[];
+  scriptCollections: Artifact[];
+  messageMappings: Artifact[];
+}
+
+export interface PackageComparison {
+  packageName: string;
+  status:
+    | "Exact Match"
+    | "Subset Match"
+    | "Missing in Env1"
+    | "Missing in Env2";
+  artifacts: PackageArtifacts;
+}
+
+export interface PackageWithArtifacts {
+  Name: string;
+  Id: string;
+  Version?: string;
+  artifacts: PackageArtifacts;
+}
+
+export interface PerformanceMetrics {
+  fetchTime: number;
+  processingTime: number;
+  totalTime: number;
+}
+
+
+
+
+
+
+// src/lib/stores/tenantStore.ts
+import { writable } from "svelte/store";
+import type { TenantConfig } from "$lib/types/cpi";
+
+// const env = (key: any) => process.env?.[key] || '';
+const env = (key: any) => import.meta.env?.[key] || "";
+
+interface TenantStoreState {
+  availableTenants: TenantConfig[];
+  selectedTenants: {
+    env1: TenantConfig | null;
+    env2: TenantConfig | null;
+  };
+}
+
+function createTenantStore() {
+  // Log environment variables for debugging
+  console.log("ENV Variables:", {
+    PQA_ENV_NAME: env("PUBLIC_PQA_ENV_NAME"),
+    PQA_HOST: env("PUBLIC_PQA_HOST"),
+    DEV_ENV_NAME: env("PUBLIC_DEV_ENV_NAME"),
+    DEV_HOST: env("PUBLIC_DEV_HOST"),
+  });
+
+  const availableTenants: TenantConfig[] = [
+    {
+      envName: env("PUBLIC_PQA_ENV_NAME") || "pqa",
+      host: env("PUBLIC_PQA_HOST") || "",
+      tokenUrl: env("PUBLIC_PQA_TOKEN_URL") || "",
+      clientId: env("PUBLIC_PQA_CLIENT_ID") || "",
+      clientSecret: env("PUBLIC_PQA_CLIENT_SECRET") || "",
+    },
+    {
+      envName: env("PUBLIC_DEV_ENV_NAME") || "dev",
+      host: env("PUBLIC_DEV_HOST") || "",
+      tokenUrl: env("PUBLIC_DEV_TOKEN_URL") || "",
+      clientId: env("PUBLIC_DEV_CLIENT_ID") || "",
+      clientSecret: env("PUBLIC_DEV_CLIENT_SECRET") || "",
+    },
+  ];
+
+  // Validate tenants
+  const validTenants = availableTenants.filter(
+    (tenant) =>
+      tenant.host && tenant.tokenUrl && tenant.clientId && tenant.clientSecret
+  );
+
+  if (validTenants.length === 0) {
+    console.error(
+      "No valid tenant configurations found. Check your .env file."
+    );
+  }
+
+  const { subscribe, set, update } = writable<TenantStoreState>({
+    availableTenants: validTenants,
+    selectedTenants: {
+      env1: null,
+      env2: null,
+    },
+  });
+
+  return {
+    subscribe,
+    selectTenant: (env: "env1" | "env2", tenant: TenantConfig) =>
+      update((store) => ({
+        ...store,
+        selectedTenants: {
+          ...store.selectedTenants,
+          [env]: tenant,
+        },
+      })),
+    reset: () =>
+      set({
+        availableTenants: validTenants,
+        selectedTenants: { env1: null, env2: null },
+      }),
+  };
+}
+
+export const tenantStore = createTenantStore();
+
+
+
+
+
+
+// src/lib/stores/comparisonStore.ts
+import { writable } from "svelte/store";
+import type { PackageComparison, PerformanceMetrics } from "$lib/types/cpi";
+
+interface ComparisonStoreState {
+  comparison: PackageComparison[] | null;
+  lastComparisonTime: Date | null;
+  isLoading: boolean;
+  error: string | null;
+  timestamp: number | null;
+  performanceMetrics: PerformanceMetrics;
+}
+
+function createComparisonStore() {
+  const CACHE_KEY = "cpi-comparison-cache";
+  const CACHE_EXPIRY_HOURS = 4;
+
+  const isCacheValid = (timestamp: number): boolean => {
+    const currentTime = new Date().getTime();
+    const timeDiff = currentTime - timestamp;
+    const hoursDiff = timeDiff / (1000 * 60 * 60);
+    return hoursDiff < CACHE_EXPIRY_HOURS;
+  };
+
+  const getCachedComparison = (): ComparisonStoreState | null => {
+    // Check if localStorage is available
+    if (typeof localStorage === "undefined") {
+      return null;
+    }
+
+    const cachedData = localStorage.getItem(CACHE_KEY);
+    if (cachedData) {
+      try {
+        const parsedData: ComparisonStoreState = JSON.parse(cachedData);
+        if (parsedData.timestamp && isCacheValid(parsedData.timestamp)) {
+          return parsedData;
+        }
+      } catch (error) {
+        console.error("Error parsing cached comparison", error);
+      }
+      localStorage.removeItem(CACHE_KEY);
+    }
+    return null;
+  };
+
+  const initialState: ComparisonStoreState = {
+    comparison: null,
+    lastComparisonTime: null,
+    isLoading: false,
+    error: null,
+    timestamp: null,
+    performanceMetrics: {
+      fetchTime: 0,
+      processingTime: 0,
+      totalTime: 0,
+    },
+  };
+
+  // Only attempt to get cached comparison on the client side
+  const storeState =
+    typeof window !== "undefined"
+      ? getCachedComparison() || initialState
+      : initialState;
+
+  const { subscribe, set, update } = writable<ComparisonStoreState>(storeState);
+
+  return {
+    subscribe,
+    setComparison: (
+      comparison: PackageComparison[],
+      performanceMetrics: PerformanceMetrics
+    ) =>
+      update((store) => {
+        const newStore: ComparisonStoreState = {
+          ...store,
+          comparison,
+          lastComparisonTime: new Date(),
+          isLoading: false,
+          error: null,
+          timestamp: new Date().getTime(),
+          performanceMetrics,
+        };
+
+        // Only attempt to set localStorage on the client side
+        if (typeof localStorage !== "undefined") {
+          try {
+            localStorage.setItem(CACHE_KEY, JSON.stringify(newStore));
+          } catch (error) {
+            console.error("Error caching comparison", error);
+          }
+        }
+
+        return newStore;
+      }),
+    setLoading: (isLoading: boolean) =>
+      update((store) => ({
+        ...store,
+        isLoading,
+      })),
+    setError: (error: string | null) =>
+      update((store) => ({
+        ...store,
+        error,
+        isLoading: false,
+      })),
+    clearComparison: () => {
+      if (typeof localStorage !== "undefined") {
+        localStorage.removeItem(CACHE_KEY);
+      }
+      set(initialState);
+    },
+    resetCache: () => {
+      if (typeof localStorage !== "undefined") {
+        localStorage.removeItem(CACHE_KEY);
+      }
+    },
+  };
+}
+
+export const comparisonStore = createComparisonStore();
+
+
+
+
+
+// src/lib/services/performanceService.ts
+import type { PerformanceMetrics } from "$lib/types/cpi";
+import { resolve } from "chart.js/helpers";
+
+export interface PerformanceTrackerOptions {
+    precision?: number;
+}
+
+export class PerformanceTracker {
+    private startTime: number;
+    private fetchStartTime: number | null = null;
+    private processingStartTime: number | null = null;
+    private precision: number;
+
+    constructor(options: PerformanceTrackerOptions = {}) {
+        this.startTime = performance.now();
+        this.precision = options.precision ?? 2;
+    }
+
+    startFetch(): void {
+        this.fetchStartTime = performance.now();
+    }
+
+    endFetch(): number {
+        if (!this.fetchStartTime) {
+            throw new Error('Fetch not started');
+        }
+        return this.roundNumber(performance.now() - this.fetchStartTime);
+    }
+
+    startProcessing(): void {
+        this.processingStartTime = performance.now();
+    }
+
+    endProcessing(): number {
+        if (!this.processingStartTime) {
+            throw new Error('Processing not started');
+        }
+        return this.roundNumber(performance.now() - this.processingStartTime);
+    }
+
+    getMetrics(): PerformanceMetrics {
+        const totalTime = this.roundNumber(performance.now() - this.startTime);
+        const fetchTime = this.fetchStartTime
+            ? this.endFetch()
+            : 0;
+        const processingTime = this.processingStartTime
+            ? this.endProcessing()
+            : 0;
+
+        return {
+            fetchTime,
+            processingTime,
+            totalTime
+        };
+    }
+
+    reset(): void {
+        this.startTime = performance.now();
+        this.fetchStartTime = null;
+        this.processingStartTime = null;
+    }
+
+    private roundNumber(value: number): number {
+        return Number(value.toFixed(this.precision));
+    }
+
+    static measureAsync<T>(
+        asyncFn: () => Promise<T>,
+        label?: string
+    ): Promise<{ result: T; metrics: PerformanceMetrics }> {
+        const tracker = new PerformanceTracker();
+
+        return asyncFn()
+            .then(result => ({
+                result,
+                metrics: tracker.getMetrics()
+            }))
+            .catch(error => {
+                console.error(`Performance measurement error ${label || ''}:`, error);
+                throw error;
+            });
+    }
+}
+
+
+
+
+
+
+
+// src/lib/services/errorService.ts
+export interface ErrorDetails {
+    type: 'Network' | 'Authentication' | 'Unknown';
+    message: string;
+    recoverable: boolean;
+    originalError?: unknown;
+}
+
+export class ErrorService {
+    static categorizeError(error: unknown): ErrorDetails {
+        if (error instanceof Error) {
+            switch (error.name) {
+                case 'NetworkError':
+                    return {
+                        type: 'Network',
+                        message: 'Connection failed. Check your internet.',
+                        recoverable: true,
+                        originalError: error
+                    };
+
+                case 'AuthenticationError':
+                    return {
+                        type: 'Authentication',
+                        message: 'Failed to authenticate. Check credentials.',
+                        recoverable: false,
+                        originalError: error
+                    };
+
+                default:
+                    return {
+                        type: 'Unknown',
+                        message: error.message || 'An unexpected error occurred.',
+                        recoverable: false,
+                        originalError: error
+                    };
+            }
+        }
+
+        if (typeof error === 'string') {
+            return {
+                type: 'Unknown',
+                message: error,
+                recoverable: false
+            };
+        }
+
+        return {
+            type: 'Unknown',
+            message: 'An unrecognized error occurred.',
+            recoverable: false,
+            originalError: error
+        };
+    }
+
+    static logError(error: unknown): void {
+        const errorDetails = this.categorizeError(error);
+
+        // Centralized error logging mechanism
+        console.error('Error Logging:', {
+            type: errorDetails.type,
+            message: errorDetails.message,
+            recoverable: errorDetails.recoverable,
+            timestamp: new Date().toISOString()
+        });
+
+        // Optional: Could integrate with external logging service
+        // this.sendToLoggingService(errorDetails);
+    }
+
+    // Optional method for potential future logging service integration
+    private static sendToLoggingService?(errorDetails: ErrorDetails): void {
+    // Placeholder for potential external logging service
+    // Could send error to services like Sentry, LogRocket, etc.
+    }
+}
+
+
+
+
+
+
+
+// src/lib/services/cpiService
+import axios, { type AxiosInstance } from "axios";
+import { Buffer } from "buffer";
+import type { TenantConfig, PackageArtifacts, Artifact } from "$lib/types/cpi";
+
+interface CPIPackage {
+  Id: string;
+  Name: string;
+}
+
+interface OAuthTokenResponse {
+  access_token: string;
+}
+
+interface CPIApiResponse<T> {
+  d: {
+    results: T[];
+  };
+}
+
+export class CPIService {
+  private config: TenantConfig;
+  private client: AxiosInstance;
+
+  constructor(config: TenantConfig) {
+    this.config = config;
+    this.client = axios.create({
+      baseURL: this.config.host,
+    });
+  }
+
+  async getOAuthToken(): Promise<string> {
+    try {
+      console.log("Authentication Attempt:", {
+        tokenUrl: this.config.tokenUrl,
+        clientId: this.config.clientId,
+        // Mask the secret for security
+        clientSecretMasked: this.config.clientSecret
+          ? "*".repeat(this.config.clientSecret.length)
+          : "MISSING",
+      });
+
+      const basicAuth =
+        "Basic " +
+        Buffer.from(
+          this.config.clientId + ":" + this.config.clientSecret
+        ).toString("base64");
+      console.log("Request Headers:", {
+        Authorization: basicAuth,
+        "Content-Type": "application/x-www-form-urlencoded",
+        clientId: this.config.clientId,
+        clientSecret: this.config.clientSecret,
+      });
+      console.log("Request Body:", "grant_type=client_credentials");
+      const response = await axios.post(
+        this.config.tokenUrl,
+        "grant_type=client_credentials", // Send grant_type as URL-encoded body
+        {
+          headers: {
+            Authorization: basicAuth,
+            "Content-Type": "application/x-www-form-urlencoded",
+          },
+        }
+      );
+      // Log successful response structure
+      console.log("Token Response:", {
+        status: response.status,
+        hasAccessToken: !!response.data.access_token,
+      });
+
+      if (!response.data.access_token) {
+        throw new Error("No access token in response");
+      }
+
+      return response.data.access_token;
+    } catch (error) {
+      // Comprehensive error logging
+      console.error("Full Authentication Error:", {
+        errorName: error instanceof Error ? error.name : "Unknown Error",
+        errorMessage: error instanceof Error ? error.message : "Unknown",
+        isAxiosError: axios.isAxiosError(error),
+      });
+
+      if (axios.isAxiosError(error)) {
+        console.error("Detailed Axios Error:", {
+          status: error.response?.status,
+          data: error.response?.data,
+          headers: error.config?.headers,
+          url: error.config?.url,
+          method: error.config?.method,
+        });
+      }
+
+      throw new Error(
+        `Authentication failed: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
+    }
+  }
+
+  async fetchPackages(): Promise<CPIPackage[]> {
+    try {
+      const token = await this.getOAuthToken();
+
+      const response = await this.client.get<CPIApiResponse<CPIPackage>>(
+        "/IntegrationPackages",
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      );
+
+      return response.data?.d?.results || [];
+    } catch (error) {
+      console.error("Package Fetch Error", error);
+      throw new Error("Failed to fetch packages");
+    }
+  }
+
+  async fetchArtifacts(packageId: string): Promise<PackageArtifacts> {
+    const token = await this.getOAuthToken();
+
+    const artifactTypes: Array<keyof PackageArtifacts> = [
+      "iflows",
+      "valueMappings",
+      "scriptCollections",
+      "messageMappings",
+    ];
+
+    const artifactEndpoints: Record<keyof PackageArtifacts, string> = {
+      iflows: "IntegrationDesigntimeArtifacts",
+      valueMappings: "ValueMappingDesigntimeArtifacts",
+      scriptCollections: "ScriptCollectionDesigntimeArtifacts",
+      messageMappings: "MessageMappingDesigntimeArtifacts",
+    };
+
+    const artifacts: PackageArtifacts = {
+      iflows: [],
+      valueMappings: [],
+      scriptCollections: [],
+      messageMappings: [],
+    };
+
+    for (const type of artifactTypes) {
+      try {
+        const response = await this.client.get<CPIApiResponse<Artifact>>(
+          `/IntegrationPackages('${packageId}')/${artifactEndpoints[type]}`,
+          {
+            headers: { Authorization: `Bearer ${token}` },
+          }
+        );
+
+        artifacts[type] = response.data?.d?.results || [];
+      } catch (error) {
+        console.error(`Error fetching ${type}`, error);
+        artifacts[type] = [];
+      }
+    }
+
+    return artifacts;
+  }
+}
+
+
+
+
+
+// src/lib/services/comparisonService.ts
+import type {
+  PackageComparison,
+  Artifact,
+  PackageArtifacts,
+  PackageWithArtifacts,
+} from "$lib/types/cpi";
+
+export class ComparisonService {
+  comparePackages(
+    env1Packages: PackageWithArtifacts[],
+    env2Packages: PackageWithArtifacts[]
+  ): PackageComparison[] {
+    const comparison: PackageComparison[] = [];
+
+    env1Packages.forEach((env1Pkg) => {
+      const matchedEnv2Pkg = env2Packages.find(
+        (env2Pkg) => env2Pkg.Name === env1Pkg.Name
+      );
+
+      if (matchedEnv2Pkg) {
+        const artifactsComparison = this.compareArtifacts(
+          env1Pkg,
+          matchedEnv2Pkg
+        );
+        const status = this.determinePackageStatus(artifactsComparison);
+
+        comparison.push({
+          packageName: env1Pkg.Name,
+          status,
+          artifacts: artifactsComparison,
+        });
+      } else {
+        comparison.push({
+          packageName: env1Pkg.Name,
+          status: "Missing in Env2",
+          artifacts: {
+            iflows: [],
+            valueMappings: [],
+            scriptCollections: [],
+            messageMappings: [],
+          },
+        });
+      }
+    });
+
+    return comparison;
+  }
+
+  private compareArtifacts(
+    env1Pkg: PackageWithArtifacts,
+    env2Pkg: PackageWithArtifacts
+  ): PackageArtifacts {
+    const artifactTypes: Array<keyof PackageArtifacts> = [
+      "iflows",
+      "valueMappings",
+      "scriptCollections",
+      "messageMappings",
+    ];
+
+    return artifactTypes.reduce(
+      (acc, type) => {
+        acc[type] = this.compareArtifactList(
+          env1Pkg.artifacts[type] || [],
+          env2Pkg.artifacts[type] || []
+        );
+        return acc;
+      },
+      {
+        iflows: [],
+        valueMappings: [],
+        scriptCollections: [],
+        messageMappings: [],
+      } as PackageArtifacts
+    );
+  }
+
+  private compareArtifactList(
+    env1Artifacts: Artifact[],
+    env2Artifacts: Artifact[]
+  ): Artifact[] {
+    const env2ArtifactIds = env2Artifacts.map((a) => a.Id);
+
+    return env1Artifacts.map((artifact) => ({
+      ...artifact,
+      status: env2ArtifactIds.includes(artifact.Id)
+        ? "Match"
+        : "Missing in Env2",
+    }));
+  }
+
+  private determinePackageStatus(
+    artifacts: PackageArtifacts
+  ): PackageComparison["status"] {
+    const allMatch = (
+      Object.keys(artifacts) as Array<keyof PackageArtifacts>
+    ).every((type) => artifacts[type].every((item) => item.status === "Match"));
+
+    return allMatch ? "Exact Match" : "Subset Match";
+  }
+}
+
+
+
+
+
+
+<script lang="ts">
+  // src/lib/components/TenantSelector.svelte
+  import { tenantStore } from "$lib/stores/tenantStore";
+  import type { TenantConfig } from "$lib/types/cpi";
+
+  let selectedEnv1: TenantConfig | null = $tenantStore.availableTenants[1];
+  let selectedEnv2: TenantConfig | null = $tenantStore.availableTenants[0];
+
+  $: {
+    if (selectedEnv1) {
+      tenantStore.selectTenant("env1", selectedEnv1);
+    }
+    if (selectedEnv2) {
+      tenantStore.selectTenant("env2", selectedEnv2);
+    }
+  }
+</script>
+
+<div class="tenant-selector">
+  <select bind:value={selectedEnv1}>
+    <option value={null}>Select Environment 1</option>
+    {#each $tenantStore.availableTenants as tenant}
+      <option value={tenant}>{tenant.envName}</option>
+    {/each}
+  </select>
+
+  <select bind:value={selectedEnv2}>
+    <option value={null}>Select Environment 2</option>
+    {#each $tenantStore.availableTenants as tenant}
+      <option value={tenant}>{tenant.envName}</option>
+    {/each}
+  </select>
+</div>
+
+<style>
+  .tenant-selector {
+    display: flex;
+    gap: 1rem;
+  }
+  select {
+    padding: 0.5rem;
+    width: 200px;
+  }
+</style>
+
+
+
+
+
+<script lang="ts">
+  // src/lib/components/ComparisonSummaryDashboard.svelte
+  import { onMount } from "svelte";
+  import Chart from "chart.js/auto";
+  import type { PackageComparison } from "$lib/types/cpi";
+
+  export let comparison: PackageComparison[];
+
+  let summaryChart: Chart;
+  let performanceChart: Chart;
+
+  function calculateSummaryStats() {
+    return {
+      exactMatches: comparison.filter((pkg) => pkg.status === "Exact Match")
+        .length,
+      subsetMatches: comparison.filter((pkg) => pkg.status === "Subset Match")
+        .length,
+      missingInEnv1: comparison.filter(
+        (pkg) => pkg.status === "Missing in Env1"
+      ).length,
+      missingInEnv2: comparison.filter(
+        (pkg) => pkg.status === "Missing in Env2"
+      ).length,
+    };
+  }
+
+  onMount(() => {
+    const stats = calculateSummaryStats();
+
+    // Summary Chart
+    const summaryCtx = document.getElementById(
+      "summaryChart"
+    ) as HTMLCanvasElement;
+    summaryChart = new Chart(summaryCtx, {
+      type: "doughnut",
+      data: {
+        labels: [
+          "Exact Match",
+          "Subset Match",
+          "Missing in Env1",
+          "Missing in Env2",
+        ],
+        datasets: [
+          {
+            data: [
+              stats.exactMatches,
+              stats.subsetMatches,
+              stats.missingInEnv1,
+              stats.missingInEnv2,
+            ],
+            backgroundColor: ["green", "orange", "red", "blue"],
+          },
+        ],
+      },
+    });
+  });
+</script>
+
+<div class="dashboard">
+  <div class="chart-container">
+    <h3>Comparison Summary</h3>
+    <canvas id="summaryChart"></canvas>
+  </div>
+</div>
+
+<style>
+  .dashboard {
+    display: flex;
+    justify-content: center;
+  }
+
+  .chart-container {
+    width: 400px;
+    height: 400px;
+  }
+</style>
+
+
+
+
+
+<script lang="ts">
+  // src/lib/components/ComparisonReport.svelte:
+  import { comparisonStore } from "$lib/stores/comparisonStore";
+  import type { PackageComparison } from "$lib/types/cpi";
+  import { createEventDispatcher } from "svelte";
+
+  const dispatch = createEventDispatcher();
+
+  export let comparison: PackageComparison[] | null = null;
+
+  function selectPackage(pkg: PackageComparison) {
+    dispatch("packageSelect", pkg);
+  }
+
+  function getStatusColor(status: string) {
+    switch (status) {
+      case "Exact Match":
+        return "green";
+      case "Subset Match":
+        return "orange";
+      case "Missing in Env1":
+      case "Missing in Env2":
+        return "red";
+      default:
+        return "gray";
+    }
+  }
+</script>
+
+{#if comparison}
+  <div class="comparison-report">
+    {#each comparison as pkg}
+      <!-- svelte-ignore a11y_unknown_role -->
+      <!-- svelte-ignore a11y_click_events_have_key_events -->
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div
+        class="package-row"
+        style="color: {getStatusColor(pkg.status)}"
+        on:click={() => selectPackage(pkg)}
+      >
+        <!-- role="icon"
+      aria-labelledby="foo"
+      tabindex="2"   -->
+        <span>{pkg.packageName}</span>
+        <span>{pkg.status}</span>
+      </div>
+    {/each}
+  </div>
+{:else}
+  <p>No comparison available</p>
+{/if}
+
+<style>
+  .comparison-report {
+    max-height: 400px;
+    overflow-y: auto;
+  }
+
+  .package-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 0.5rem;
+    border-bottom: 1px solid #eee;
+    cursor: pointer;
+    transition: background-color 0.3s;
+  }
+
+  .package-row:hover {
+    background-color: #f0f0f0;
+  }
+</style>
+
+
+
+
+
+
+
+
+<script lang="ts">
+  // src/lib/components/ArtifactDetailModal.svelte
+  import { onMount } from "svelte";
+  import Chart from "chart.js/auto";
+  import type { PackageComparison, PackageArtifacts } from "$lib/types/cpi";
+
+  export let packageDetails: PackageComparison;
+  export let closeModal: () => void;
+
+  let artifactTypeChart: Chart;
+  let statusChart: Chart;
+
+  onMount(() => {
+    // Artifact Type Distribution Chart
+    const artifactTypesCtx = document.getElementById(
+      "artifactTypeChart"
+    ) as HTMLCanvasElement;
+    artifactTypeChart = new Chart(artifactTypesCtx, {
+      type: "pie",
+      data: {
+        labels: [
+          "iFlows",
+          "Value Mappings",
+          "Script Collections",
+          "Message Mappings",
+        ],
+        datasets: [
+          {
+            data: [
+              packageDetails.artifacts.iflows.length,
+              packageDetails.artifacts.valueMappings.length,
+              packageDetails.artifacts.scriptCollections.length,
+              packageDetails.artifacts.messageMappings.length,
+            ],
+            backgroundColor: [
+              "rgba(255, 99, 132, 0.6)",
+              "rgba(54, 162, 235, 0.6)",
+              "rgba(255, 206, 86, 0.6)",
+              "rgba(75, 192, 192, 0.6)",
+            ],
+          },
+        ],
+      },
+    });
+
+    // Artifact Status Chart
+    const statusCtx = document.getElementById(
+      "statusChart"
+    ) as HTMLCanvasElement;
+    const statusCounts = {
+      Match: 0,
+      "Missing in Env1": 0,
+      "Missing in Env2": 0,
+    };
+
+    ["iflows", "valueMappings", "scriptCollections", "messageMappings"].forEach(
+      (type) => {
+        packageDetails.artifacts[type as keyof PackageArtifacts].forEach(
+          (artifact) => {
+            statusCounts[artifact.status || "Match"]++;
+          }
+        );
+      }
+    );
+
+    statusChart = new Chart(statusCtx, {
+      type: "bar",
+      data: {
+        labels: Object.keys(statusCounts),
+        datasets: [
+          {
+            label: "Artifact Status",
+            data: Object.values(statusCounts),
+            backgroundColor: [
+              "rgba(75, 192, 192, 0.6)",
+              "rgba(255, 99, 132, 0.6)",
+              "rgba(54, 162, 235, 0.6)",
+            ],
+          },
+        ],
+      },
+    });
+  });
+</script>
+
+<div class="modal">
+  <div class="modal-content">
+    <h2>{packageDetails.packageName}</h2>
+    <p>Overall Status: {packageDetails.status}</p>
+
+    <div class="charts-container">
+      <div class="chart-wrapper">
+        <h3>Artifact Type Distribution</h3>
+        <canvas id="artifactTypeChart"></canvas>
+      </div>
+      <div class="chart-wrapper">
+        <h3>Artifact Status</h3>
+        <canvas id="statusChart"></canvas>
+      </div>
+    </div>
+
+    <div class="artifact-details">
+      {#each Object.entries(packageDetails.artifacts) as [type, artifacts]}
+        <div class="artifact-section">
+          <h3>{type.replace(/([A-Z])/g, " $1").toUpperCase()}</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>Artifact ID</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each artifacts as artifact}
+                <tr>
+                  <td>{artifact.Id}</td>
+                  <td>{artifact.status || "Match"}</td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+      {/each}
+    </div>
+
+    <button on:click={closeModal}>Close</button>
+  </div>
+</div>
+
+<style>
+  .modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000;
+  }
+
+  .modal-content {
+    background: white;
+    padding: 20px;
+    border-radius: 5px;
+    width: 90%;
+    max-width: 1000px;
+    max-height: 90%;
+    overflow-y: auto;
+  }
+
+  .charts-container {
+    display: flex;
+    justify-content: space-between;
+  }
+
+  .chart-wrapper {
+    width: 48%;
+  }
+
+  .artifact-details {
+    margin-top: 20px;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+
+  th,
+  td {
+    border: 1px solid #ddd;
+    padding: 8px;
+    text-align: left;
+  }
+</style>
+
