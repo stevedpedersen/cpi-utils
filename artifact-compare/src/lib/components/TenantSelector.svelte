@@ -1,11 +1,10 @@
-// src/lib/components/TenantSelector.svelte
-
 <script lang="ts">
+  // src/lib/components/TenantSelector.svelte
   import { tenantStore } from '$lib/stores/tenantStore';
   import type { TenantConfig } from '$lib/types/cpi';
 
-  let selectedEnv1: TenantConfig | null = null;
-  let selectedEnv2: TenantConfig | null = null;
+  let selectedEnv1: TenantConfig | null = $tenantStore.availableTenants[1];
+  let selectedEnv2: TenantConfig | null = $tenantStore.availableTenants[0];
 
   $: {
     if (selectedEnv1) {
@@ -21,7 +20,8 @@
   <select bind:value={selectedEnv1}>
     <option value={null}>Select Environment 1</option>
     {#each $tenantStore.availableTenants as tenant}
-      <option value={tenant}>{tenant.envName}</option>
+      {console.log('TENANT STORE: ', $tenantStore.availableTenants)}
+      <option value={tenant}>{`[${tenant.clientSecret}]`}</option>
     {/each}
   </select>
 

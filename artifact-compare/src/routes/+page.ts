@@ -1,7 +1,7 @@
 // src/routes/+page.ts
-import { PageLoad } from '$lib/types';
+import type { Load } from '@sveltejs/kit';
 
-export const load: PageLoad = async () => {
+export const load: Load = async () => {
     return {
         title: 'CPI Artifact Comparison'
     };
