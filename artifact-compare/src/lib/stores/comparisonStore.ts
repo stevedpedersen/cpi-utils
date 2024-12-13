@@ -25,6 +25,11 @@ function createComparisonStore() {
     }
 
     const getCachedComparison = (): ComparisonStoreState | null => {
+        // Check if localStorage is available
+        if (typeof localStorage === 'undefined') {
+            return null;
+        }
+
         const cachedData = localStorage.getItem(CACHE_KEY);
         if (cachedData) {
             try {
@@ -40,7 +45,7 @@ function createComparisonStore() {
         return null;
     }
 
-    const initialState: ComparisonStoreState = getCachedComparison() || {
+    const initialState: ComparisonStoreState = {
         comparison: null,
         lastComparisonTime: null,
         isLoading: false,
@@ -53,7 +58,12 @@ function createComparisonStore() {
         }
     };
 
-    const { subscribe, set, update } = writable<ComparisonStoreState>(initialState);
+    // Only attempt to get cached comparison on the client side
+    const storeState = typeof window !== 'undefined'
+        ? (getCachedComparison() || initialState)
+        : initialState;
+
+    const { subscribe, set, update } = writable<ComparisonStoreState>(storeState);
 
     return {
         subscribe,
@@ -71,10 +81,13 @@ function createComparisonStore() {
                 performanceMetrics
             };
 
-            try {
-                localStorage.setItem(CACHE_KEY, JSON.stringify(newStore));
-            } catch (error) {
-                console.error('Error caching comparison', error);
+            // Only attempt to set localStorage on the client side
+            if (typeof localStorage !== 'undefined') {
+                try {
+                    localStorage.setItem(CACHE_KEY, JSON.stringify(newStore));
+                } catch (error) {
+                    console.error('Error caching comparison', error);
+                }
             }
 
             return newStore;
@@ -89,11 +102,15 @@ function createComparisonStore() {
             isLoading: false
         })),
         clearComparison: () => {
-            localStorage.removeItem(CACHE_KEY);
+            if (typeof localStorage !== 'undefined') {
+                localStorage.removeItem(CACHE_KEY);
+            }
             set(initialState);
         },
         resetCache: () => {
-            localStorage.removeItem(CACHE_KEY);
+            if (typeof localStorage !== 'undefined') {
+                localStorage.removeItem(CACHE_KEY);
+            }
         }
     };
 }
