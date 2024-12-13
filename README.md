@@ -1,49 +1,154 @@
-# cpi-utils
-Package/Artifact comparison tool, etc. for SAP BTP Cloud Integration (aka CPI)
+# sv
 
+Everything you need to build a Svelte project, powered by [`sv`](https://github.com/sveltejs/cli).
 
+## Creating a project
 
+If you're seeing this, you've probably already done this step. Congrats!
 
-or (64bit installation)
-```pwsh
-npm config set script-shell "C:\\Program Files\\git\\bin\\bash.exe"
-npm config set shell "C:\\Program Files\\git\\bin\\bash.exe"
-```
-Note that you need to have git for windows installed.
+```bash
+# create a new project in the current directory
+npx sv create
 
-
-You can revert it by running:
-```pwsh
-npm config delete script-shell
-npm config delete shell
+# create a new project in my-app
+npx sv create my-app
 ```
 
+## Developing
 
-/IntegrationPackages('{Id}')/IntegrationDesigntimeArtifacts
-    - https://api.sap.com/api/IntegrationContent/path/get_IntegrationPackages___Id____IntegrationDesigntimeArtifacts
+Once you've created a project and installed dependencies with `npm install` (or `pnpm install` or `yarn`), start a development server:
 
-/IntegrationPackages('{Id}')/MessageMappingDesigntimeArtifacts
-    - https://api.sap.com/api/IntegrationContent/path/get_IntegrationPackages___Id____MessageMappingDesigntimeArtifacts
+```bash
+npm run dev
 
-/IntegrationPackages('{Id}')/ValueMappingDesigntimeArtifacts
-    - https://api.sap.com/api/IntegrationContent/path/get_IntegrationPackages___Id____ValueMappingDesigntimeArtifacts
-/IntegrationPackages('{Id}')/ScriptCollectionDesigntimeArtifacts
-    - https://api.sap.com/api/IntegrationContent/path/get_IntegrationPackages___Id____ScriptCollectionDesigntimeArtifacts
+# or start the server and open the app in a new browser tab
+npm run dev -- --open
+```
+
+## Building
+
+To create a production version of your app:
+
+```bash
+npm run build
+```
+
+You can preview the production build with `npm run preview`.
+
+> To deploy your app, you may need to install an [adapter](https://svelte.dev/docs/kit/adapters) for your target environment.
 
 
 
 
+artifact-compare/
+├── src/
+│   ├── lib/
+│   │   ├── components/
+│   │   │   ├── ArtifactDetailModal.svelte
+│   │   │   ├── ComparisonReport.svelte
+│   │   │   ├── ComparisonSummaryDashboard.svelte
+│   │   │   └── TenantSelector.svelte
+│   │   ├── services/
+│   │   │   ├── cpiService.ts
+│   │   │   ├── comparisonService.ts
+│   │   │   ├── errorService.ts
+│   │   │   └── performanceService.ts
+│   │   ├── stores/
+│   │   │   ├── comparisonStore.ts
+│   │   │   └── tenantStore.ts
+│   │   └── types/
+│   │       └── cpi.ts
+│   ├── routes/
+│   │   ├── +page.svelte
+│   │   └── +page.ts
+│   └── app.html
+├── package.json
+├── svelte.config.js
+└── tsconfig.json
+Snippets:
 
-https://api.sap.com/api/IntegrationContent/path/get_MessageMappingDesigntimeArtifacts
 
 
-https://api.sap.com/api/IntegrationContent/resource/Value_Mappings
-- /ValueMappingDesigntimeArtifacts
+// src/lib/types/cpi.ts:
+export interface TenantConfig {
+  envName: string;
+  host: string;
+  tokenUrl: string;
+}
 
-https://api.sap.com/api/IntegrationContent/resource/Integration_Adapter
-- /IntegrationAdapterDesigntimeArtifacts
+export interface Artifact {
+  Id: string;
+  Name: string;
+  status?: 'Match' | 'Missing';
+}
 
-https://api.sap.com/api/IntegrationContent/resource/Message_Mappings
-- /MessageMappingDesigntimeArtifacts
+export interface PackageComparison {
+  packageName: string;
+  status: string;
+  artifacts: Record<string, Artifact[]>;
+}
 
-https://api.sap.com/api/IntegrationContent/resource/Script_Collections
+
+// src/lib/services/cpiService.ts:
+export class CPIService {
+  private config: TenantConfig;
+
+  constructor(config: TenantConfig) {
+    this.config = config;
+  }
+
+  async getOAuthToken(): Promise<string> {
+    // OAuth token fetching logic
+  }
+
+  async fetchPackages(): Promise<any[]> {
+    // Fetch integration packages
+  }
+}
+
+
+
+// src/lib/stores/comparisonStore.ts:
+function createComparisonStore() {
+  const { subscribe, update } = writable({
+    comparison: null,
+    lastComparisonTime: null,
+    isLoading: false
+  });
+
+  return {
+    subscribe,
+    setComparison: (comparison: PackageComparison[]) => 
+      update(store => ({ ...store, comparison }))
+  };
+}
+
+
+
+// src/routes/+page.svelte:
+<script lang="ts">
+  import TenantSelector from '$lib/components/TenantSelector.svelte';
+  import ComparisonReport from '$lib/components/ComparisonReport.svelte';
+
+  async function performComparison() {
+    // Comparison logic
+  }
+</script>
+
+<TenantSelector />
+<button on:click={performComparison}>Compare</button>
+
+
+
+// package.json:
+{
+  "name": "artifact-compare",
+  "scripts": {
+    "dev": "vite dev",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "axios": "^1.6.5",
+    "chart.js": "^4.4.1"
+  }
+}
