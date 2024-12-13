@@ -1,5 +1,8 @@
 // src/lib/types/cpi.ts:
 export interface TenantConfig {
+  proxyHost?: string;
+  proxyPort?: number;
+  name?: string;
   envName: string;
   host: string;
   tokenUrl: string;

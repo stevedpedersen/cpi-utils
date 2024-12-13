@@ -4,7 +4,9 @@
 	"version": "0.0.1",
 	"type": "module",
 	"scripts": {
-		"dev": "vite dev",
+    "server": "node server.js",
+    "vite:dev": "vite dev",
+		"dev": "concurrently \"npm run server\" \"npm run vite:dev\"",
 		"build": "vite build",
 		"preview": "vite preview",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
@@ -14,7 +16,10 @@
 		"@sveltejs/adapter-auto": "^3.0.0",
 		"@sveltejs/kit": "^2.9.0",
 		"@sveltejs/vite-plugin-svelte": "^5.0.0",
+		"@types/express": "^5.0.0",
 		"@types/node": "^22.10.2",
+		"concurrently": "^9.1.0",
+		"cors": "^2.8.5",
 		"svelte": "^5.0.0",
 		"svelte-check": "^4.0.0",
 		"typescript": "^5.0.0",
@@ -22,7 +27,10 @@
 	},
 	"dependencies": {
 		"axios": "^1.7.9",
+		"body-parser": "^1.20.3",
 		"buffer": "^6.0.3",
-		"chart.js": "^4.4.7"
+		"chart.js": "^4.4.7",
+		"dotenv": "^16.4.7",
+		"express": "^4.21.2"
 	}
 }
